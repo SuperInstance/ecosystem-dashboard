@@ -1,38 +1,23 @@
-[package]
+# CAPABILITY.toml — ecosystem-dashboard
+# Static HTML dashboard for the SuperInstance ecosystem
+
 name = "ecosystem-dashboard"
 version = "1.0.0"
-layer = "ui"
-description = "Single-file static HTML dashboard for the SuperInstance ecosystem — live stats, language breakdown, conservation gauge, repo table, capability cloud, and event timeline backed by Supabase"
+description = "Live dashboard: fleet budgets, conservation gauge, capability cloud, repo table, event timeline, language stats"
 
-[provides]
-capabilities = [
-  { name = "live-stats", type = "widget", description = "Real-time stat cards: repos, languages, capabilities, agents, total budget" },
-  { name = "language-pie", type = "widget", description = "CSS-only conic-gradient pie chart of repo language distribution" },
-  { name = "conservation-gauge", type = "widget", description = "Per-agent stacked budget bars for gamma (reasoning) and eta (execution)" },
-  { name = "repo-table", type = "widget", description = "Searchable, sortable repo table with language badges and GitHub links" },
-  { name = "capability-cloud", type = "widget", description = "Category-grouped tag cloud with hover tooltips" },
-  { name = "event-timeline", type = "widget", description = "Scrolling timeline of recent fleet events with color-coded types" },
-  { name = "auto-refresh", type = "feature", description = "Automatic data reload every 60 seconds with live indicator" },
-  { name = "responsive-layout", type = "feature", description = "2-column grid on desktop, single column on mobile" },
-  { name = "supabase-rest-client", type = "module", description = "Browser-side Supabase REST fetch with anon key authentication" },
+provides = [
+    "fleet-budget-visualization",
+    "conservation-gauge-panel",
+    "capability-cloud-panel",
+    "repo-table-panel",
+    "event-timeline-panel",
+    "language-stats-panel",
+    "supabase-read-access",
 ]
 
-exports = [
-  "apiFetch",
-  "renderLangPie",
-  "renderRepoTable",
-  "renderCapCloud",
-  "renderBudget",
-  "renderEvents",
-  "loadAll",
-  "sortRepos",
-  "index.html",
-]
-
-[requires]
-optional = [
-  { crate = "supabase", reason = "Dashboard reads repos, capabilities, budgets, and events from Supabase REST API" },
-  { crate = "si-fleet-api", reason = "Can consume si-fleet-api endpoints instead of direct Supabase access" },
-  { crate = "si-cli", reason = "si scan syncs repo metadata to Supabase tables rendered by the dashboard" },
-  { crate = "conservation-law-rs", reason = "Conservation gauge visualizes gamma + eta = total budget invariant" },
+requires = [
+    "supabase-instance",
+    "fleet-budget-data",
+    "fleet-events-table",
+    "capability-data",
 ]

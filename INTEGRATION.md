@@ -1,244 +1,430 @@
-# Integration Guide: ecosystem-dashboard
+# INTEGRATION.md — ecosystem-dashboard
 
-## What This Dashboard Provides
+> Static HTML dashboard for the SuperInstance ecosystem. Deployed to
+> GitHub Pages (gh-pages branch), reads live data from Supabase via
+> REST, and renders six dashboard panels for fleet monitoring.
 
-A single-file, self-contained HTML dashboard for the SuperInstance ecosystem. No build step required — just open `index.html` in a browser or serve it statically. It connects directly to the Supabase REST API and renders real-time fleet telemetry.
+## Table of Contents
 
-### Dashboard Panels
+1. [Architecture Overview](#architecture-overview)
+2. [Dashboard Panels](#dashboard-panels)
+3. [Supabase Tables Read](#supabase-tables-read)
+4. [Data Fetching](#data-fetching)
+5. [Adding New Panels](#adding-new-panels)
+6. [Panel Implementation Guide](#panel-implementation-guide)
+7. [Deployment to gh-pages](#deployment-to-gh-pages)
+8. [Styling & Theming](#styleing--theming)
+9. [Auto-Refresh](#auto-refresh)
+10. [Integration with si-cli](#integration-with-si-cli)
+11. [Integration with si-fleet-api](#integration-with-si-fleet-api)
+12. [Environment Configuration](#environment-configuration)
+13. [Testing Locally](#testing-locally)
+14. [Performance](#performance)
 
-- **Stats Row** — Live cards: Repositories, Languages, Capabilities, Agents, Total Budget (γ+η)
-- **Language Breakdown** — CSS-only conic-gradient pie chart of repo languages with legend
-- **Conservation Gauge** — Per-agent budget bars showing gamma (reasoning) and eta (execution) allocations with conservation law annotation
-- **Fleet Repositories** — Searchable, sortable table of all repos with language badges and GitHub links
-- **Capability Cloud** — Grouped tag cloud of capabilities by category (infrastructure, data, communication, intelligence, automation, security)
-- **Fleet Events** — Scrolling timeline of recent spawn/complete/error/budget events
+---
 
-### Key Features
+## Architecture Overview
 
-- **Auto-refresh** — Reloads all data every 60 seconds
-- **Live indicator** — Pulsing green dot with last-refresh timestamp
-- **Client-side search** — Instant filtering of repo table by name, description, or language
-- **Column sorting** — Click table headers to sort repos
-- **Responsive layout** — 2-column grid on desktop, single column on mobile
-- **Zero dependencies** — Pure HTML/CSS/JS, no bundler or framework
+The ecosystem-dashboard is a single `index.html` file with embedded CSS
+and JavaScript. No build step, no frameworks — just vanilla HTML/CSS/JS
+that reads directly from the Supabase REST API.
 
-### JavaScript API
-
-- `apiFetch(table, query)` — Generic Supabase REST fetch with auth headers
-- `renderLangPie(repos)` — CSS conic-gradient pie chart
-- `renderRepoTable(filter)` — Sortable/searchable repo table
-- `renderCapCloud(caps)` — Category-grouped capability tags
-- `renderBudget(budgets)` — Gamma/eta stacked bar chart
-- `renderEvents(events)` — Timeline with color-coded event types
-- `loadAll()` — Orchestrates all panel refreshes
-- `sortRepos(col)` — Toggle sort direction on column click
-
-## How to Deploy
-
-```bash
-# Static hosting
-python3 -m http.server 8080
-# or
-npx serve .
-# or upload to any static host (GitHub Pages, Vercel, Netlify, S3)
+```
+ecosystem-dashboard/
+└── index.html    — Complete dashboard (552 lines)
+    ├── <style>   — Dark theme CSS with CSS variables
+    ├── <body>    — Panel layout (stats row + 2-column grid)
+    └── <script>  — Supabase REST fetch + render functions
 ```
 
-## Cross-Repo Connections
+### Key Design Decisions
 
-### With `si-fleet-api`: Backend Data Source
+- **No build tools** — serves directly from gh-pages
+- **CSS-only pie chart** — language distribution via `conic-gradient`
+- **Client-side search/sort** — repo table filtering in JS
+- **60-second auto-refresh** — `setInterval(loadAll, 60000)`
+- **Responsive grid** — 2-column on desktop, 1-column on mobile
 
-The dashboard can read from `si-fleet-api` instead of direct Supabase:
+---
 
-```javascript
-// Replace direct Supabase calls with API calls
-async function apiFetch(endpoint) {
-  const res = await fetch(`https://api.superinstance.dev/api/${endpoint}`);
-  return res.json();
-}
+## Dashboard Panels
 
-// Load repos via API
-const repos = await apiFetch('repos');
-renderRepoTable(repos);
-```
+The dashboard consists of six panels in a 2-column grid layout:
 
-### With `si-cli`: Supabase Sync
+### 1. Stats Row (Top)
 
-Repos discovered by `si scan` are synced to Supabase, which the dashboard renders:
+Four stat cards showing aggregate metrics:
 
-```bash
-# In CI or locally
-si scan ./workspace
-# → upserts repos to Supabase `repos` table
-# → dashboard auto-refreshes and shows new repos
-```
+| Card         | Source                        | Field                |
+|--------------|-------------------------------|----------------------|
+| Repos        | `repos` table count           | `statRepos`          |
+| Languages    | Unique languages in repos     | `statLangs`          |
+| Capabilities | `capabilities` table count    | `statCaps`           |
+| Agents       | `fleet_budgets` row count     | `statAgents`         |
 
-### With `conservation-law-rs`: Conservation Visualization
+### 2. Language Pie (Left)
 
-The dashboard visualizes `γ + η = total` conservation as stacked budget bars:
+- **Source**: `repos` table grouped by `language`
+- **Rendering**: CSS `conic-gradient` pie chart + legend
+- **Function**: `renderLangPie(repos)` — counts repos per language,
+  generates gradient stops and color-coded legend
 
-```javascript
-// Rendered in renderBudget()
-const maxTotal = Math.max(...budgets.map(b => (b.gamma || 0) + (b.eta || 0)), 1);
-const gPct = (gamma / maxTotal) * 100;
-const ePct = (eta / maxTotal) * 100;
-// HTML: <div class="budget-gamma" style="width:${gPct}%">γ ${gamma}</div>
-//       <div class="budget-eta" style="width:${ePct}%">η ${eta}</div>
-```
+### 3. Repo Table (Right)
 
-### With Supabase: Direct REST Integration
+- **Source**: `repos` table with name, language, description, url
+- **Features**: Client-side search, sortable columns (name, language, description)
+- **Function**: `renderRepoTable(filter)` — filters and sorts `allRepos` array
+- **Language badges**: Color-coded by language (Rust=#DEA584, TypeScript=#3178C6, etc.)
 
-Connects to Supabase using anon key for read-only access:
+### 4. Capability Cloud (Left)
 
-```javascript
-const SUPABASE_URL = 'https://project.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIs...'; // anon key
+- **Source**: `capabilities` table with name, category, provides
+- **Rendering**: Tag cloud grouped by category, size scaled by provides count
+- **Categories**: infrastructure, data, communication, intelligence, automation, security, general
+- **Function**: `renderCapCloud(caps)` — groups by category, renders styled tags
 
-const headers = {
-  'apikey': SUPABASE_KEY,
-  'Authorization': `Bearer ${SUPABASE_KEY}`,
-  'Content-Type': 'application/json'
-};
+### 5. Conservation Gauge (Right)
 
-async function apiFetch(table, query = '') {
-  const url = `${SUPABASE_URL}/rest/v1/${table}${query ? '?' + query : ''}`;
-  const res = await fetch(url, { headers });
-  return res.json();
-}
+- **Source**: `fleet_budgets` table with agent_id, gamma, eta, total_budget
+- **Rendering**: Stacked bar chart (gamma in blue, eta in orange) per agent
+- **Conservation note**: Explains γ + η = const invariant
+- **Function**: `renderBudget(budgets)` — normalizes to max total, renders bars
 
-// Fetch all tables
-const repos      = await apiFetch('repos',        'select=name,description,language,url&order=name');
-const caps       = await apiFetch('capabilities', 'select=name,category,provides');
-const budgets    = await apiFetch('fleet_budgets', 'select=*');
-const events     = await apiFetch('fleet_events', 'select=*&order=created_at.desc&limit=20');
-```
+### 6. Event Timeline (Full Width)
 
-## Design Patterns
+- **Source**: `fleet_events` table, last 20 events ordered by created_at desc
+- **Rendering**: Timeline with timestamp, event type badge, message
+- **Event types**: spawn, complete, error, info, budget
+- **Function**: `renderEvents(events)` — formats timestamps, color-codes types
 
-### Pattern: Embedded Static Dashboard
+---
 
-Host the dashboard as a GitHub Pages site that auto-updates:
+## Supabase Tables Read
 
-```yaml
-# .github/workflows/dashboard.yml
-- name: Deploy to GitHub Pages
-  uses: peaceiris/actions-gh-pages@v3
-  with:
-    github_token: ${{ secrets.GITHUB_TOKEN }}
-    publish_dir: .
-```
+The dashboard queries four Supabase tables via REST:
 
-### Pattern: Kiosk Mode Display
-
-Run the dashboard full-screen on a wall-mounted display:
-
-```bash
-# Raspberry Pi or any Linux box
-chromium-browser --kiosk --app=http://localhost:8080/index.html
-```
-
-### Pattern: Custom Supabase Project
-
-Point the dashboard at your own Supabase instance:
-
-```javascript
-// Edit these two lines in index.html
-const SUPABASE_URL = 'https://your-project.supabase.co';
-const SUPABASE_KEY = 'your-anon-key';
-```
-
-### With `fleet-warden-rs`: Disk Health Widget
-
-Add a disk health panel to the dashboard by querying fleet-warden state:
-
-```javascript
-async function renderDiskHealth() {
-  const events = await apiFetch('fleet_events', 'event_type=eq.cleanup&order=created_at.desc&limit=10');
-  let html = '<div class="timeline">';
-  events.forEach(e => {
-    html += `<div class="event-item">
-      <div class="event-time">${new Date(e.created_at).toLocaleString()}</div>
-      <span class="event-type budget">cleanup</span>
-      <div class="event-msg">${e.agent_id}: ${e.payload.category} — ${e.payload.recovered || '—'}</div>
-    </div>`;
-  });
-  html += '</div>';
-  document.getElementById('diskPanel').innerHTML = html;
-}
-```
-
-### With `agent-homeostasis-rs`: Regulation Gauge
-
-Visualize homeostatic parameters as real-time gauges:
-
-```javascript
-async function renderRegulation(agentId) {
-  const readings = await apiFetch('sensor_readings', `agent_id=eq.${agentId}&order=timestamp.desc&limit=50`);
-  // Render sparkline for each sensor
-  const sensors = groupBy(readings, 'sensor_name');
-  let html = '<div class="budget-bars">';
-  for (const [name, values] of Object.entries(sensors)) {
-    const latest = values[0].value;
-    const target = values[0].target || 0;
-    const deviation = Math.abs(latest - target);
-    html += `<div class="budget-row">
-      <div class="budget-label">${name}</div>
-      <div class="budget-bar-track">
-        <div class="budget-gamma" style="width:${Math.min(100, latest * 100)}%">${latest.toFixed(2)}</div>
-      </div>
-      <div class="budget-total">Δ${deviation.toFixed(2)}</div>
-    </div>`;
-  }
-  html += '</div>';
-  document.getElementById('regPanel').innerHTML = html;
-}
-```
-
-### With Supabase: Row-Level Security
-
-Secure dashboard data with RLS policies:
+### repos
 
 ```sql
--- Allow anon read-only access to repos
-CREATE POLICY "Allow anon read repos" ON repos
-  FOR SELECT TO anon USING (true);
-
--- Allow anon read-only access to capabilities
-CREATE POLICY "Allow anon read capabilities" ON capabilities
-  FOR SELECT TO anon USING (true);
-
--- Restrict fleet_budgets to authenticated users
-CREATE POLICY "Allow auth read budgets" ON fleet_budgets
-  FOR SELECT TO authenticated USING (true);
+SELECT name, description, language, url FROM repos ORDER BY name;
 ```
 
-## Design Patterns
+Used for: stats row (count), language pie (group by language), repo table.
 
-### Pattern: Offline-First Dashboard
+### capabilities
 
-Cache dashboard data in localStorage for offline viewing:
+```sql
+SELECT name, category, provides FROM capabilities;
+```
+
+Used for: stats row (count), capability cloud panel.
+
+### fleet_budgets
+
+```sql
+SELECT * FROM fleet_budgets;
+```
+
+Used for: stats row (agent count, total budget), conservation gauge bars.
+
+### fleet_events
+
+```sql
+SELECT * FROM fleet_events ORDER BY created_at DESC LIMIT 20;
+```
+
+Used for: event timeline panel.
+
+---
+
+## Data Fetching
+
+All data is fetched via the Supabase REST API using the public anon key:
+
+```javascript
+const SUPABASE_URL = 'https://igogykhksgkaxcwzudwi.supabase.co';
+const SUPABASE_ANON_KEY = '...'; // public key, read-only access
+
+async function apiFetch(table, query) {
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
+    const res = await fetch(url, {
+        headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+}
+```
+
+### Query Patterns
+
+```javascript
+// Repos — all, ordered by name
+const repos = await apiFetch('repos', 'select=name,description,language,url&order=name');
+
+// Capabilities — name, category, provides
+const caps = await apiFetch('capabilities', 'select=name,category,provides');
+
+// Budgets — all fields
+const budgets = await apiFetch('fleet_budgets', 'select=*');
+
+// Events — last 20, newest first
+const events = await apiFetch('fleet_events', 'select=*&order=created_at.desc&limit=20');
+```
+
+---
+
+## Adding New Panels
+
+To add a new panel to the dashboard:
+
+### Step 1: Add Panel HTML
+
+Insert a new `<div class="panel">` in the dashboard grid:
+
+```html
+<div class="panel">
+    <div class="panel-header">
+        <span class="icon">📊</span> My New Panel
+    </div>
+    <div class="panel-body" id="myNewPanel">
+        Loading...
+    </div>
+</div>
+```
+
+### Step 2: Add Render Function
+
+```javascript
+function renderMyNewPanel(data) {
+    if (!data.length) {
+        document.getElementById('myNewPanel').innerHTML =
+            '<div class="empty">No data</div>';
+        return;
+    }
+    // Build HTML from data
+    let html = '<ul>';
+    data.forEach(item => {
+        html += `<li>${esc(item.name)}: ${item.value}</li>`;
+    });
+    html += '</ul>';
+    document.getElementById('myNewPanel').innerHTML = html;
+}
+```
+
+### Step 3: Fetch Data in loadAll()
+
+Add a new try/catch block to the `loadAll()` function:
 
 ```javascript
 async function loadAll() {
-  try {
-    const repos = await apiFetch('repos', 'select=*');
-    localStorage.setItem('dash_repos', JSON.stringify(repos));
-    renderRepoTable(repos);
-  } catch (err) {
-    const cached = localStorage.getItem('dash_repos');
-    if (cached) renderRepoTable(JSON.parse(cached));
-    else showError('repoTableWrap', err);
-  }
+    // ... existing panels ...
+
+    // My new panel
+    try {
+        const data = await apiFetch('my_table', 'select=*&limit=50');
+        renderMyNewPanel(data);
+    } catch (err) { showError('myNewPanel', err); }
 }
 ```
 
-### Pattern: Custom Theme Injection
+### Step 4: Full-Width Panels
 
-Allow theme customization via CSS variables:
+For panels that span both columns:
+
+```html
+<div class="panel full-width">
+    <div class="panel-header">
+        <span class="icon">📈</span> Fleet Timeline
+    </div>
+    <div class="panel-body" id="timelinePanel">Loading...</div>
+</div>
+```
+
+---
+
+## Panel Implementation Guide
+
+### Color-Coded Tags
+
+Use the `data-cat` attribute for category-based coloring:
+
+```html
+<span class="cap-tag" data-cat="infrastructure">my-cap</span>
+<span class="cap-tag" data-cat="data">my-data-cap</span>
+```
+
+Available categories and their colors:
+- `infrastructure` — purple (#8b5cf6)
+- `data` — blue (#3b82f6)
+- `communication` — cyan (#06b6d4)
+- `intelligence` — green (#22c55e)
+- `automation` — orange (#f59e0b)
+- `security` — red (#ef4444)
+- `general` — slate (#94a3b8)
+
+### Bar Charts
+
+Follow the conservation gauge pattern:
+
+```html
+<div class="budget-bar-track">
+    <div class="budget-gamma" style="width:35%">γ 0.35</div>
+    <div class="budget-eta" style="width:65%">η 0.65</div>
+</div>
+```
+
+### Error States
+
+Use the `showError` helper:
 
 ```javascript
-function setTheme(theme) {
-  document.documentElement.style.setProperty('--bg', theme.bg);
-  document.documentElement.style.setProperty('--purple', theme.primary);
-  document.documentElement.style.setProperty('--green', theme.secondary);
+function showError(panelId, err) {
+    document.getElementById(panelId).innerHTML =
+        `<div class="error">⚠ ${esc(err.message)}</div>`;
 }
 ```
+
+---
+
+## Deployment to gh-pages
+
+The dashboard is deployed from the `gh-pages` branch of
+`SuperInstance/ecosystem-dashboard`.
+
+### Deployment Process
+
+```bash
+# Make changes to index.html on gh-pages branch
+git checkout gh-pages
+# Edit index.html...
+git add index.html
+git commit -m "dashboard: update panel layout"
+git push origin gh-pages
+```
+
+The site is live at: `https://superinstance.github.io/ecosystem-dashboard/`
+
+### No Build Step Required
+
+Since the dashboard is a single HTML file with no dependencies, it
+deploys as-is. GitHub Pages serves `index.html` directly from the
+gh-pages branch.
+
+---
+
+## Styling & Theming
+
+The dashboard uses CSS custom properties for theming:
+
+```css
+:root {
+    --bg: #0d0d1a;           /* Deep navy background */
+    --surface: #161628;      /* Panel background */
+    --surface2: #1e1e38;     /* Hover/input background */
+    --border: #2a2a4a;       /* Border color */
+    --purple: #8b5cf6;       /* Primary accent */
+    --green: #22c55e;        /* Success/healthy */
+    --blue: #3b82f6;         /* Info/gamma */
+    --orange: #f59e0b;       /* Warning/eta */
+    --cyan: #06b6d4;         /* Links */
+    --red: #ef4444;          /* Error/violation */
+    --text: #e2e8f0;         /* Primary text */
+    --text-dim: #94a3b8;     /* Secondary text */
+    --text-muted: #64748b;   /* Tertiary text */
+    --radius: 10px;          /* Border radius */
+}
+```
+
+To change the theme, modify these variables in `:root`.
+
+---
+
+## Auto-Refresh
+
+The dashboard automatically refreshes every 60 seconds:
+
+```javascript
+loadAll();                        // Initial load
+setInterval(loadAll, 60000);      // Refresh every 60s
+```
+
+The "Last refreshed" timestamp updates on each cycle:
+
+```javascript
+document.getElementById('lastRefresh').textContent =
+    new Date().toLocaleTimeString();
+```
+
+---
+
+## Integration with si-cli
+
+Data written by `si-cli` appears on the dashboard:
+
+1. **`si scan .`** syncs repos → Supabase `repos` table → Dashboard repo table updates
+2. **`si audit .`** logs results → Supabase `fleet_events` → Dashboard event timeline updates
+3. **`si check --from-supabase`** reads same `fleet_budgets` as dashboard conservation gauge
+
+The dashboard is a read-only view of the data that si-cli writes.
+
+---
+
+## Integration with si-fleet-api
+
+The dashboard can alternatively fetch data through si-fleet-api instead
+of direct Supabase REST. The endpoints map 1:1:
+
+| Dashboard Panel   | Direct Supabase             | Via si-fleet-api              |
+|-------------------|-----------------------------|-------------------------------|
+| Language Pie      | `apiFetch('repos', ...)`    | `GET /api/repos`              |
+| Repo Table        | `apiFetch('repos', ...)`    | `GET /api/repos`              |
+| Capability Cloud  | `apiFetch('capabilities', ...)` | `GET /api/capabilities`   |
+| Conservation      | `apiFetch('fleet_budgets', ...)` | `GET /api/fleet/budgets`  |
+| Events            | `apiFetch('fleet_events', ...)`  | `GET /api/fleet/events`   |
+
+To switch, replace `apiFetch()` calls with `fetch('http://localhost:3001/api/...')`.
+
+---
+
+## Environment Configuration
+
+The Supabase URL and anon key are hardcoded in `index.html`:
+
+```javascript
+const SUPABASE_URL = 'https://igogykhksgkaxcwzudwi.supabase.co';
+const SUPABASE_ANON_KEY = '...';
+```
+
+To use a different Supabase instance, update these constants.
+
+---
+
+## Testing Locally
+
+```bash
+# Clone and checkout gh-pages
+gh repo clone SuperInstance/ecosystem-dashboard
+cd ecosystem-dashboard
+git checkout gh-pages
+
+# Serve locally (any static server works)
+python3 -m http.server 8080
+# Or: npx serve .
+
+# Open in browser
+open http://localhost:8080
+```
+
+The dashboard requires network access to Supabase to load data.
+
+---
+
+## Performance
+
+- **4 parallel requests** on each load (repos, capabilities, budgets, events)
+- **Lightweight rendering** — no virtual DOM, direct innerHTML updates
+- **60s refresh interval** — balances freshness with API load
+- **Single file** — ~552 lines, <20KB gzipped, no external dependencies
